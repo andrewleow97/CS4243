@@ -27,13 +27,20 @@ def rgb2gray(img):
     # can also use matrix multiplication via dot product with np.dot on the weights
     return img_gray
 
-def convolve(img, filter):
-    output_img = np.zeros_like(img) 
-    for x in range(img.shape[0]):
-        for y in range(img.shape[1]):
-            #convolve and combine with np.hypot
-            np.hypot(x,y)
-    return output_img
+def convolve(img, kernel):
+    # for filter of size (2k+1, 2k+1), need to pad k zeroes around img
+    imgH, imgW = img.shape[:2]
+    kH, kW = kernel.shape[:2]
+    pad = (kW-1) // 2 #should give one since k = (3-1)/2
+    img_padded = pad_zeros(img, pad, pad, pad, pad) #padding
+    kernel = np.flip(kernel) # flipping kernel for convolution instead of cross correlation
+    output = np.zeros((imgH, imgW), dtype=float) # creating output matrix
+    for y in np.arange(pad, imgH+pad):
+        for x in np.arange(pad, imgW+pad):
+            roi = img_padded[y-pad:y+pad+1, x-pad:x+pad+1] # get roi around pixel
+            k = np.vdot(roi, kernel) # convolving roi and kernel
+            output[y-pad, x-pad] = k
+    return output
 
 def gray2grad(img):
     """
@@ -59,9 +66,11 @@ def gray2grad(img):
                         [1, 0, -1],
                         [2, 1, 0]], dtype = float)
     
-
-    ###Your code here####
-    ###
+    img_grad_h = convolve(img, sobelh)
+    img_grad_v = convolve(img, sobelv)
+    img_grad_d1 = convolve(img, sobeld1)
+    img_grad_d2 = convolve(img, sobeld2)       
+    
     return img_grad_h, img_grad_v, img_grad_d1, img_grad_d2
 
 def pad_zeros(img, pad_height_bef, pad_height_aft, pad_width_bef, pad_width_aft):
@@ -82,18 +91,13 @@ def pad_zeros(img, pad_height_bef, pad_height_aft, pad_width_bef, pad_width_aft)
     """
     height, width = img.shape[:2]
     new_height, new_width = (height + pad_height_bef + pad_height_aft), (width + pad_width_bef + pad_width_aft)
-    img_pad = np.zeros((new_height, new_width)) if len(img.shape) == 2 else np.zeros((new_height, new_width, img.shape[2]))
-    if len(img.shape) == 2: #grayscale image
-        for i in range(pad_height_bef, new_height - pad_height_aft):
-            for j in range(pad_width_bef, new_width - pad_width_aft):
-                img_pad[i][j] = img[i-pad_height_bef][j-pad_width_bef]
+    if len(img.shape) == 2:
+        img_pad = np.zeros((new_height, new_width), dtype=np.uint8)
+        img_pad[pad_width_bef:-pad_width_aft, pad_height_bef:-pad_height_aft] = img
     else:
-        for channel in range(img.shape[2]): #multi channel image
-            for i in range(pad_height_bef, new_height - pad_height_aft):
-                for j in range(pad_width_bef, new_width - pad_width_aft):
-                    img_pad[i][j][channel] = img[i-pad_height_bef][j-pad_width_bef][channel]
-
-    
+        img_pad = np.zeros((new_height, new_width, img.shape[2]), dtype=np.uint8)
+        img_pad[pad_width_bef:-pad_width_aft, pad_height_bef:-pad_height_aft, :] = img
+        
     return img_pad
 
 
@@ -111,9 +115,33 @@ def normalized_cross_correlation(img, template):
     Hk, Wk = template.shape[:2]
     Ho = Hi - Hk + 1
     Wo = Wi - Wk + 1
-
-    ###Your code here###
-    ###
+    response = np.zeros((Ho, Wo), np.float)
+    pad_height_bef, pad_height_aft = template.shape[0] // 2 - (1 if template.shape[0] % 2 == 0 else 0), template.shape[0] // 2
+    pad_width_bef, pad_width_aft = template.shape[1] // 2 - (1 if template.shape[1] % 2 == 0 else 0), template.shape[1] // 2
+    
+    # this is |F|, constant across all loops
+    norm_kernel = np.sqrt(np.sum(np.square(template)))
+    for i_height in range(pad_height_bef, Hi-pad_height_aft):
+        for i_width in range(pad_width_bef, Wi-pad_width_aft):
+            out_height = i_height - pad_height_bef
+            out_width = i_width - pad_width_bef
+            corr_sum = 0.0
+            w_sq = 0.0
+            #multiplying each pixel in the template by the image pixel that it overlaps and then summing the results over all the pixels of the template
+            for t_height in range(Hk):
+                for t_width in range(Wk):
+                    if len(img.shape) == 3: # RGB image and template
+                        for t_channel in range(template.shape[2]):
+                            #sum of fuvc * pi+u, j+v, c
+                            corr_sum += np.multiply(img[i_height + t_height - pad_height_bef, i_width + t_width - pad_width_bef, t_channel], template[t_height, t_width, t_channel])
+                            #part of |wij|
+                            w_sq += np.square(img[i_height + t_height - pad_height_bef, i_width + t_width - pad_width_bef, t_channel])
+                    else: #grayscale image and template
+                        corr_sum += np.multiply(img[i_height + t_height - pad_height_bef, i_width + t_width - pad_width_bef], template[t_height, t_width])
+                        w_sq += np.square(img[i_height + t_height - pad_height_bef, i_width + t_width - pad_width_bef])
+            # sum for xij here = (fu,v,c * pi+u, j+v, c)/|F||wij| 
+            response[out_height, out_width] = corr_sum/(norm_kernel*np.sqrt(w_sq))
+              
     return response
 
 
