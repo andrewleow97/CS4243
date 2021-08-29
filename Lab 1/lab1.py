@@ -206,15 +206,23 @@ def normalized_cross_correlation_matrix(img, template):
     Fr = np.reshape(template,(3*Hk*Wk,1))
     print(Fr.shape)
     Pr = []
+    red = []
+    green = []
+    blue = []
     flag = 0
     for i_height in range(pad_height_bef, Hi-pad_height_aft):
         for i_width in range(pad_width_bef, Wi-pad_width_aft):
-            if flag == 0:
-                print(img[i_height - pad_height_bef:i_height+pad_width_aft+1, i_width - pad_height_bef:i_width + pad_width_aft+1].shape)
-                flag = 1
+            red.append(img[i_height - pad_height_bef:i_height+pad_width_aft+1, i_width - pad_height_bef:i_width + pad_width_aft+1][0].reshape(int(Hk*Wk/3),1))
+            green.append(img[i_height - pad_height_bef:i_height+pad_width_aft+1, i_width - pad_height_bef:i_width + pad_width_aft+1][1].reshape(int(Hk*Wk/3),1))
+            blue.append(img[i_height - pad_height_bef:i_height+pad_width_aft+1, i_width - pad_height_bef:i_width + pad_width_aft+1][2].reshape(int(Hk*Wk/3),1))
             Pr.append(img[i_height - pad_height_bef:i_height+pad_width_aft+1, i_width - pad_height_bef:i_width + pad_width_aft+1].reshape(3*Hk*Wk,1))
     # Pr = np.array(Pr).reshape(3*Ho*Wo, 3*Hk*Wk)
+    red = np.array(red)
+    red = np.reshape(red, (red.shape[0], red.shape[1]))
+    # green = np.array(green).reshape(green.shape[0], green.shape[1])
+    # blue = np.array(blue).reshape(blue.shape[0], blue.shape[1])
     print(np.array(Pr).shape)
+    print(np.array(red).shape, np.array(green).shape, np.array(blue).shape)
     # print(Ho*Wo*3)
     # Pr has dimension 3HxWx x 3HfWf
     # reshape Xr back into image X = Ho x Wo
