@@ -31,16 +31,17 @@ def convolve(img, kernel):
     # for filter of size (2k+1, 2k+1), need to pad k zeroes around img
     imgH, imgW = img.shape[:2]
     kH, kW = kernel.shape[:2]
-    pad = (kW-1) // 2 #should give one since k = (3-1)/2
+    pad = (kW-1) // 2 
     img_padded = pad_zeros(img, pad, pad, pad, pad) #padding
     kernel = np.flip(kernel) # flipping kernel for convolution instead of cross correlation
     output = np.zeros((imgH, imgW), dtype=float) # creating output matrix
     for y in np.arange(pad, imgH+pad):
         for x in np.arange(pad, imgW+pad):
             roi = img_padded[y-pad:y+pad+1, x-pad:x+pad+1].astype(float) # get roi around pixel
-            k = float(np.vdot(roi, kernel,)) # convolving roi and kernel
+            k = float(np.vdot(roi, kernel)) # convolving roi and kernel
             output[y-pad, x-pad] = k
     return output
+
 
 def gray2grad(img):
     """
@@ -183,8 +184,6 @@ def normalized_cross_correlation_fast(img, template):
     return response
 
 
-
-
 def normalized_cross_correlation_matrix(img, template):
     """
     10 points.
@@ -194,40 +193,58 @@ def normalized_cross_correlation_matrix(img, template):
     :param template: numpy.ndarray
     :return response: numpy.ndarray. dtype: float
     """
+    # Useful functions : np.stack((a1,a2,a3),axis=1)
+    #template.ravel().reshape(3*Xk*Yk,1) for making the 3*Hk*Wk , 1 matrix
+    #https://towardsdatascience.com/reshaping-numpy-arrays-in-python-a-step-by-step-pictorial-tutorial-aed5f471cf0b
     Hi, Wi = img.shape[:2]
     Hk, Wk = template.shape[:2]
     Ho = Hi - Hk + 1
     Wo = Wi - Wk + 1
     response = []
-    norm_kernel = np.sum(np.square(template, dtype=float))
-    pad_height_bef, pad_height_aft = template.shape[0] // 2 - (1 if template.shape[0] % 2 == 0 else 0), template.shape[0] // 2
-    pad_width_bef, pad_width_aft = template.shape[1] // 2 - (1 if template.shape[1] % 2 == 0 else 0), template.shape[1] // 2
-    # Fr has dimension HfWf x 1 = (3*HkWk, 1)
-    Fr = np.reshape(template,(3*Hk*Wk,1))
-    print(Fr.shape)
+    Fr = []
     Pr = []
-    red = []
-    green = []
-    blue = []
-    flag = 0
-    for i_height in range(pad_height_bef, Hi-pad_height_aft):
-        for i_width in range(pad_width_bef, Wi-pad_width_aft):
-            red.append(img[i_height - pad_height_bef:i_height+pad_width_aft+1, i_width - pad_height_bef:i_width + pad_width_aft+1][0].reshape(int(Hk*Wk/3),1))
-            green.append(img[i_height - pad_height_bef:i_height+pad_width_aft+1, i_width - pad_height_bef:i_width + pad_width_aft+1][1].reshape(int(Hk*Wk/3),1))
-            blue.append(img[i_height - pad_height_bef:i_height+pad_width_aft+1, i_width - pad_height_bef:i_width + pad_width_aft+1][2].reshape(int(Hk*Wk/3),1))
-            Pr.append(img[i_height - pad_height_bef:i_height+pad_width_aft+1, i_width - pad_height_bef:i_width + pad_width_aft+1].reshape(3*Hk*Wk,1))
-    # Pr = np.array(Pr).reshape(3*Ho*Wo, 3*Hk*Wk)
-    red = np.array(red)
-    red = np.reshape(red, (red.shape[0], red.shape[1]))
-    # green = np.array(green).reshape(green.shape[0], green.shape[1])
-    # blue = np.array(blue).reshape(blue.shape[0], blue.shape[1])
-    print(np.array(Pr).shape)
-    print(np.array(red).shape, np.array(green).shape, np.array(blue).shape)
-    # print(Ho*Wo*3)
-    # Pr has dimension 3HxWx x 3HfWf
-    # reshape Xr back into image X = Ho x Wo
-    # Xr = PrFr matrix multiplication
-    # response = response.reshape(Ho, Wo)
+    norm_kernel = np.sum(np.square(template, dtype=float))
+    
+    if len(template.shape) == 3:
+        Fr.append(template[:,:,0].flatten())
+        Fr.append(template[:,:,1].flatten())
+        Fr.append(template[:,:,2].flatten())
+    else:
+        Fr.append(template[:,:].flatten())
+    # Fr has dimension HfWf x 1 = (3*HkWk, 1)
+    Fr = np.array(Fr).flatten().reshape(3*Hk*Wk,1)
+ 
+    norm_factor = np.empty((Ho,Wo))
+    for x in range(Ho):
+        for y in range(Wo): # for region of output
+            temp = []
+            w_sq = 0.0
+            if len(img.shape) == 3:
+                # for channel in range(img.shape[2]):
+                #     roi = img[x:x+Hk,y:y+Wk,channel].astype(float)
+                #     temp.append(roi.flatten())
+                #     w_sq += np.sum(np.square(roi))
+                temp.append(img[x:x+Hk,y:y+Wk,0].astype(float))
+                temp.append(img[x:x+Hk,y:y+Wk,1].astype(float))
+                temp.append(img[x:x+Hk,y:y+Wk,2].astype(float))
+                w_sq += np.sum(np.square(np.array(temp))).astype(float)
+            else:
+                roi = img[x:x+Hk,y:y+Wk].astype(float)
+                temp.append(roi.flatten())
+                w_sq += np.sum(np.square(roi)).astype(float)
+            temp = np.array(temp)
+            temp = temp.flatten().reshape(-1) # Remaking temp such that its shape is (1,12), instead of 3 lists
+            norm_factor[x][y] = 1/(np.sqrt(norm_kernel*w_sq))
+            Pr.append(temp) # append 3*Hk*Wk long list into Pr
+    
+    Pr = np.stack(Pr) # create Ho*Wo rows from the lists in Pr, outputting a (Ho*Wo, 3*Hk*Wk) matrix
+    response = np.dot(Pr,Fr) # perform matrix multiplication for cross correlation output
+
+
+    response = response.reshape(Ho, Wo) # reshape output back into Ho*Wo
+    for x in range(Ho):
+        for y in range(Wo): # for region of output
+            response[x][y] *= norm_factor[x][y] # apply norm factor for each response
     return response
 
 
@@ -284,14 +301,34 @@ def normalized_cross_correlation_ms(img, template):
     Hk, Wk = template.shape[:2]
     Ho = Hi - Hk + 1
     Wo = Wi - Wk + 1
-
-    ###Your code here###
-    ###
+    response = np.zeros((Ho, Wo), dtype=float)
+    pad_height_bef, pad_height_aft = template.shape[0] // 2 - (1 if template.shape[0] % 2 == 0 else 0), template.shape[0] // 2
+    pad_width_bef, pad_width_aft = template.shape[1] // 2 - (1 if template.shape[1] % 2 == 0 else 0), template.shape[1] // 2
+    template_mean = (template.sum()/np.square((2*pad_height_bef)+1))
+    template = np.subtract(template,template_mean, dtype=float)
+    # print(template)
+    norm_kernel = np.sum(np.square(template, dtype=float))
+    for i_height in range(pad_height_bef, Hi-pad_height_aft):
+        for i_width in range(pad_width_bef, Wi-pad_width_aft):
+            out_height = i_height - pad_height_bef
+            out_width = i_width - pad_width_bef
+            corr_sum = 0.0
+            w_sq = 0.0
+            if len(img.shape) == 3:
+                for channel in range(img.shape[2]):
+                    roi = img[i_height - pad_height_bef:i_height+pad_height_aft+1, i_width - pad_width_bef:i_width + pad_width_aft+1, channel]
+                    roi_mean = roi.sum()/np.square((2*pad_height_bef)+1).astype(float)
+                    roi = np.subtract(roi,roi_mean, dtype=float)
+                    corr_sum += np.sum(np.multiply(roi, template[:,:,channel], dtype=float))
+                    w_sq += np.sum(np.square(roi, dtype=float))
+            else:
+                roi_mean = (img[i_height - pad_height_bef:i_height+pad_height_aft+1, i_width - pad_width_bef:i_width + pad_width_aft+1].sum()/np.square((2*pad_height_bef)+1))
+                roi = img[i_height - pad_height_bef:i_height+pad_height_aft+1, i_width - pad_width_bef:i_width + pad_width_aft+1]
+                roi = roi - roi_mean
+                corr_sum += np.sum(np.multiply(roi, template, dtype=float))
+                w_sq += np.sum(np.square(roi, dtype=float))
+            response[out_height][out_width] = float(corr_sum/(np.sqrt(norm_kernel, dtype=float)*np.sqrt(w_sq, dtype=float)))
     return response
-
-
-
-
 
 
 ###############################################
