@@ -116,7 +116,7 @@ def normalized_cross_correlation(img, template):
     Hk, Wk = template.shape[:2]
     Ho = Hi - Hk + 1
     Wo = Wi - Wk + 1
-    response = np.zeros((Ho, Wo), np.float)
+    response = np.zeros((Ho, Wo), dtype=float)
     pad_height_bef, pad_height_aft = template.shape[0] // 2 - (1 if template.shape[0] % 2 == 0 else 0), template.shape[0] // 2
     pad_width_bef, pad_width_aft = template.shape[1] // 2 - (1 if template.shape[1] % 2 == 0 else 0), template.shape[1] // 2
     
@@ -161,7 +161,7 @@ def normalized_cross_correlation_fast(img, template):
     Hk, Wk = template.shape[:2]
     Ho = Hi - Hk + 1
     Wo = Wi - Wk + 1
-    response = np.zeros((Ho, Wo), np.float)
+    response = np.zeros((Ho, Wo), dtype=float)
     pad_height_bef, pad_height_aft = template.shape[0] // 2 - (1 if template.shape[0] % 2 == 0 else 0), template.shape[0] // 2
     pad_width_bef, pad_width_aft = template.shape[1] // 2 - (1 if template.shape[1] % 2 == 0 else 0), template.shape[1] // 2
     norm_kernel = np.sum(np.square(template, dtype=float))
@@ -213,17 +213,13 @@ def normalized_cross_correlation_matrix(img, template):
         Fr.append(template[:,:].flatten())
     # Fr has dimension HfWf x 1 = (3*HkWk, 1)
     Fr = np.array(Fr).flatten().reshape(3*Hk*Wk,1)
- 
+    # creating array to store normalization factors of Ho,Wo
     norm_factor = np.empty((Ho,Wo))
     for x in range(Ho):
         for y in range(Wo): # for region of output
             temp = []
             w_sq = 0.0
             if len(img.shape) == 3:
-                # for channel in range(img.shape[2]):
-                #     roi = img[x:x+Hk,y:y+Wk,channel].astype(float)
-                #     temp.append(roi.flatten())
-                #     w_sq += np.sum(np.square(roi))
                 temp.append(img[x:x+Hk,y:y+Wk,0].astype(float))
                 temp.append(img[x:x+Hk,y:y+Wk,1].astype(float))
                 temp.append(img[x:x+Hk,y:y+Wk,2].astype(float))
@@ -234,7 +230,7 @@ def normalized_cross_correlation_matrix(img, template):
                 w_sq += np.sum(np.square(roi)).astype(float)
             temp = np.array(temp)
             temp = temp.flatten().reshape(-1) # Remaking temp such that its shape is (1,12), instead of 3 lists
-            norm_factor[x][y] = 1/(np.sqrt(norm_kernel*w_sq))
+            norm_factor[x][y] = 1/(np.sqrt(norm_kernel*w_sq)) # get normalization factor and put into array
             Pr.append(temp) # append 3*Hk*Wk long list into Pr
     
     Pr = np.stack(Pr) # create Ho*Wo rows from the lists in Pr, outputting a (Ho*Wo, 3*Hk*Wk) matrix
@@ -244,7 +240,9 @@ def normalized_cross_correlation_matrix(img, template):
     response = response.reshape(Ho, Wo) # reshape output back into Ho*Wo
     for x in range(Ho):
         for y in range(Wo): # for region of output
+            
             response[x][y] *= norm_factor[x][y] # apply norm factor for each response
+            
     return response
 
 
@@ -273,30 +271,22 @@ def non_max_suppression(response, suppress_range, threshold=None):
             for j in range(response.shape[1]):
                 if response[i][j] < threshold:
                     response[i][j] = 0 # Set X<τ = 0
-    while np.amax(response) > 0:
+    while np.amax(response) > 0: # while global maxima exists
         max = np.amax(response)
-        coords = np.where(response == max)
+        coords = np.where(response == max) # get coords
         i = coords[0][0]
-        j = coords[1][0]
-        res[i][j] = response[i][j]
+        j = coords[1][0] 
+        res[i][j] = response[i][j] # store coords
         response[i][j] = 0
-        for h in range(-height, height):
+        for h in range(-height, height): # set region around global maxima as 0
             for w in range(-width, width):
                 if (i+h >= 0) and (i+h < response.shape[0]) and (j+w >= 0) and (j+w < response.shape[1]): # boundary check
                     response[i+h][j+w] = 0
     return res
 
 ##### Part 4: Question And Answer #####
-    
+
 def normalized_cross_correlation_ms(img, template):
-    """
-    10 points
-    Please implement mean-subtracted cross correlation which corresponds to OpenCV TM_CCOEFF_NORMED.
-    For simplicty, use the "fast" version.
-    :param img: numpy.ndarray
-    :param template: numpy.ndarray
-    :return response: numpy.ndarray. dtype: float
-    """
     Hi, Wi = img.shape[:2]
     Hk, Wk = template.shape[:2]
     Ho = Hi - Hk + 1
@@ -304,32 +294,39 @@ def normalized_cross_correlation_ms(img, template):
     response = np.zeros((Ho, Wo), dtype=float)
     pad_height_bef, pad_height_aft = template.shape[0] // 2 - (1 if template.shape[0] % 2 == 0 else 0), template.shape[0] // 2
     pad_width_bef, pad_width_aft = template.shape[1] // 2 - (1 if template.shape[1] % 2 == 0 else 0), template.shape[1] // 2
-    template_mean = (template.sum()/np.square((2*pad_height_bef)+1))
-    template = np.subtract(template,template_mean, dtype=float)
-    # print(template)
-    norm_kernel = np.sum(np.square(template, dtype=float))
+    new_template = np.empty_like(template, dtype=float) # new float template
+    if len(template.shape) == 3:
+        for i in range(3):
+            new_template[:,:,i] = np.subtract(template[:,:,i], template[:,:,i].sum()/(Hk*Wk)) # mean subtracted template
+    else:
+        new_template[:,:] = np.subtract(template[:,:], template[:,:].sum()/(Hk*Wk))
+    sumsq_template = np.linalg.norm(new_template).astype(float) # |F'|
+    new_img = np.empty_like(img, dtype=float) # new float img
+    if len(img.shape) == 3:
+        new_img[:,:,:] = img[:,:,:]
+    else:
+        new_img[:,:] = img[:,:]
+
     for i_height in range(pad_height_bef, Hi-pad_height_aft):
         for i_width in range(pad_width_bef, Wi-pad_width_aft):
             out_height = i_height - pad_height_bef
             out_width = i_width - pad_width_bef
             corr_sum = 0.0
             w_sq = 0.0
-            if len(img.shape) == 3:
-                for channel in range(img.shape[2]):
-                    roi = img[i_height - pad_height_bef:i_height+pad_height_aft+1, i_width - pad_width_bef:i_width + pad_width_aft+1, channel]
-                    roi_mean = roi.sum()/np.square((2*pad_height_bef)+1).astype(float)
-                    roi = np.subtract(roi,roi_mean, dtype=float)
-                    corr_sum += np.sum(np.multiply(roi, template[:,:,channel], dtype=float))
-                    w_sq += np.sum(np.square(roi, dtype=float))
+            if len(new_img.shape) == 3:
+                for channel in range(new_img.shape[2]):
+                    roi = new_img[i_height - pad_height_bef:i_height+pad_height_aft+1, i_width - pad_width_bef:i_width + pad_width_aft+1, channel]
+                    roi_mean = roi.sum()/(Hk*Wk) # get mean of image region
+                    roi = np.subtract(roi, roi_mean).astype(float) # get mean subtracted image region
+                    corr_sum += np.sum(np.multiply(roi, new_template[:,:,channel], dtype=float))
+                    w_sq += np.sum(np.square(roi, dtype=float)) #|Wij|^2, need to sum up for each channel so later then sqrt
             else:
-                roi_mean = (img[i_height - pad_height_bef:i_height+pad_height_aft+1, i_width - pad_width_bef:i_width + pad_width_aft+1].sum()/np.square((2*pad_height_bef)+1))
-                roi = img[i_height - pad_height_bef:i_height+pad_height_aft+1, i_width - pad_width_bef:i_width + pad_width_aft+1]
-                roi = roi - roi_mean
-                corr_sum += np.sum(np.multiply(roi, template, dtype=float))
+                roi = new_img[i_height - pad_height_bef:i_height+pad_height_aft+1, i_width - pad_width_bef:i_width + pad_width_aft+1]
+                roi_mean = roi.sum()/(Hk*Wk)
+                corr_sum += np.sum(np.multiply(roi, new_template[:,:], dtype=float))
                 w_sq += np.sum(np.square(roi, dtype=float))
-            response[out_height][out_width] = float(corr_sum/(np.sqrt(norm_kernel, dtype=float)*np.sqrt(w_sq, dtype=float)))
+            response[out_height][out_width] = float(corr_sum/(sumsq_template*np.sqrt(w_sq))) #Xij
     return response
-
 
 ###############################################
 """Helper functions: You should not have to touch the following functions.
