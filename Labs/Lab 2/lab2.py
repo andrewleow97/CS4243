@@ -3,7 +3,8 @@ import numpy as np
 import cv2 
 import matplotlib.pyplot as plt
 from matplotlib import cm
-
+import matplotlib
+from skimage.draw import circle_perimeter
 
 ##################### TASK 1 ###################
 
@@ -12,7 +13,7 @@ def make_gaussian_kernel(ksize, sigma):
     '''
     Implement the simplified Gaussian kernel below:
     k(x,y)=exp(((x-x_mean)^2+(y-y_mean)^2)/(-2sigma^2))
-    Make Gaussian kernel be central symmentry by moving the 
+    Make Gaussian kernel be central symmetry by moving the 
     origin point of the coordinate system from the top-left
     to the center. Please round down the mean value. In this assignment,
     we define the center point (cp) of even-size kernel to be the same as that of the nearest
@@ -22,10 +23,19 @@ def make_gaussian_kernel(ksize, sigma):
     :return kernel: numpy.ndarray of shape (ksize, ksize)
     '''
     
-    # YOUR CODE HERE
+    # Creating empty gaussian kernel
+    kernel = np.zeros((ksize, ksize))
 
-    # END
+    # Defining centre point
+    cp = ksize // 2
 
+    # Getting k(x, y) based on equation
+    for i in range(ksize):
+        for j in range(ksize):
+            # x-xmean and y-ymean
+            x = i-cp
+            y = j-cp
+            kernel[i][j] = np.exp(np.hypot(x,y)/(-2 * np.power(sigma, 2)))
     return kernel / kernel.sum()
 
 # GIVEN
@@ -130,34 +140,31 @@ def estimate_gradients(original_img, display=True):
     dy = None
     d_mag = None
     d_angle = None
-    
-    # YOUR CODE HERE 
-    '''
-    HINT:
-    In the lecture, 
-    
-    Sx =  1  0 -1
-          2  0 -2
-          1  0 -1
-          
-    Sy =  1  2  1
-          0  0  0
-         -1 -2 -1
-         
-    Here:
-    
-    Kx = [[ 1,  2,  1],
-          [ 0,  0,  0],
-          [-1, -2, -1]]
-    
-    Ky = [[ 1,  0, -1],
-          [ 2,  0, -2],
-          [ 1,  0, -1]]
- 
-    This is because x direction is the downward line.
-    '''
 
-    # END
+# Input Sobel kernels are flipped due to convolution flipping
+
+    Kx = [[ -1,  -2,  -1],
+          [ 0,  0,  0],
+          [1, 2, 1]]
+    
+    Kx = np.array(Kx)
+
+    Ky = [[ -1,  0, 1],
+          [ -2,  0, 2],
+          [ -1,  0, 1]]
+
+    Ky = np.array(Ky)
+    original_img = original_img / 255.0
+    dx = cs4243_filter(original_img, Kx)
+
+    dy = cs4243_filter(original_img, Ky)
+
+    # Getting magnitudde
+    d_mag = np.hypot(dx, dy)
+
+    # Getting angle using arctan2 dy/dx
+    d_angle = np.arctan2(dy, dx)
+
     if display:
     
         fig2, axes_array = plt.subplots(1, 4)
@@ -213,9 +220,46 @@ def non_maximum_suppression(d_mag, d_angle, display=True):
     out = np.zeros(d_mag.shape, d_mag.dtype)
     # Change angles to degrees to improve quality of life
     d_angle_180 = d_angle * 180/np.pi
- 
-    # YOUR CODE HERE
+    height,width = d_mag.shape
 
+    # To avoid edge checking out of bounds, use 1 and width-1, 1 and height-1 as ranges
+    for i in range(1, height-1):
+        for j in range(1, width-1):
+            try:
+                left = 0
+                right = 0
+                angle = d_angle_180[i][j]
+                # b as neighbours
+                if (-22.5 <= angle < 22.5) or (157.5 <= angle < 180) or (-180 <= angle < -157.5):
+                    left = d_mag[i-1][j]
+                    right = d_mag[i+1][j]
+
+                # a as neighbours
+                elif (22.5 <= angle < 67.5) or (-157.5 <= angle < -112.5):
+                    left = d_mag[i-1][j-1]
+                    right = d_mag[i+1][j+1]
+
+                # d as neighbours
+                elif (67.5 <= angle < 112.5) or (-112.5 <= angle < -67.5):
+                    left = d_mag[i][j+1]
+                    right = d_mag[i][j-1]
+
+                # c as neighbours
+                elif (112.5 <= angle < 157.5) or (-67.5 <= angle < -22.5):
+                    left = d_mag[i+1][j-1]
+                    right = d_mag[i-1][j+1]
+
+                # Keep pixel if it is local maxima
+                if (d_mag[i][j] > left) and (d_mag[i][j] > right):
+                    out[i][j] = d_mag[i][j]
+
+                # Discard otherwise
+                else:
+                    out[i][j] = 0
+
+
+            except IndexError:
+                pass
     # END
     if display:
         _ = plt.figure(figsize=(10,10))
@@ -235,8 +279,47 @@ def non_maximum_suppression_interpol(d_mag, d_angle, display=True):
 
     out = np.zeros(d_mag.shape, d_mag.dtype)
     d_angle_180 = d_angle * 180/np.pi
-    
-    # YOUR CODE HERE
+    height, width = d_mag.shape
+    for i in range(1, height - 1):
+        for j in range(1, width - 1):
+            angle = d_angle_180[i][j]
+               
+            # interpolate a and b
+            if (0 <= angle < 45) or (-180 <= angle < -135):
+                approx = np.tan(np.deg2rad(angle))
+                left = approx * (d_mag[i + 1][j + 1] - d_mag[i + 1][j]) + d_mag[i + 1][j]
+                right = approx * (d_mag[i - 1][j - 1] - d_mag[i - 1][j]) + d_mag[i - 1][j]
+
+            # interpolate a and d
+            elif (45 <= angle < 90) or (-135 <= angle < -90):
+                angle = 90 - angle # making angle be < 90
+                approx = np.tan(np.deg2rad(angle))
+                left = approx * (d_mag[i + 1][j + 1] - d_mag[i][j + 1]) + d_mag[i][j + 1]
+                right = approx * (d_mag[i - 1][j - 1] - d_mag[i][j - 1]) + d_mag[i][j - 1]
+
+            # interpolate c and d
+            elif (90 <= angle < 135) or (-90 <= angle < -45):
+                angle -= 90 # making angle be < 90
+                approx = np.tan(np.deg2rad(angle))
+                left = approx * (d_mag[i + 1][j - 1] - d_mag[i][j - 1]) + d_mag[i][j - 1]
+                right = approx * (d_mag[i - 1][j + 1] - d_mag[i][j + 1]) + d_mag[i][j + 1]
+
+            # interpolate c and b
+            elif (135 <= angle < 180) or (-45 <= angle < 0):
+                angle = 180 - angle # making angle be < 90
+                approx = np.tan(np.deg2rad(angle))
+                left = approx * (d_mag[i - 1][j + 1] - d_mag[i - 1][j]) + d_mag[i - 1][j]
+                right = approx * (d_mag[i + 1][j - 1] - d_mag[i + 1][j]) + d_mag[i + 1][j]
+
+            # Keep pixel if it is local maxima
+            if (d_mag[i][j] > left) and (d_mag[i][j] > right):
+                out[i][j] = d_mag[i][j]
+
+            # Discard otherwise
+            else:
+                out[i][j] = 0    
+
+
 
     # END
     if display:
@@ -246,8 +329,10 @@ def non_maximum_suppression_interpol(d_mag, d_angle, display=True):
     
     return out
 
+
+
 # 4 IMPLEMENT
-def double_thresholding(inp, perc_weak=0.1, perc_strong=0.3, display=True):
+def double_thresholding(inp, perc_weak, perc_strong, display=True):
     '''
     Perform double thresholding. Use on the output of NMS. The high and low thresholds are computed as follow:
     
@@ -262,10 +347,25 @@ def double_thresholding(inp, perc_weak=0.1, perc_strong=0.3, display=True):
     :param perc_strong: value to determine high threshold
     :return weak_edges, strong_edges: binary edge images
     '''
-    weak_edges = strong_edges = None
-    
-    # YOUR CODE HERE
-    
+
+    # Getting values as per formula
+    delta = inp.max() - inp.min()
+    high_threshold = inp.min() + perc_strong*delta
+    low_threshold = inp.min() + perc_weak*delta
+
+    # Creating strong and weak edge arrays
+    h, w = inp.shape
+    weak_edges = np.zeros((h, w), dtype=int)
+    strong_edges = np.zeros((h, w), dtype=int)
+
+    # Looping through each pixel to check if within thresholds
+    for i in range(h):
+        for j in range(w):
+            if (inp[i][j] >= high_threshold): # strong edge >= high threshold
+                strong_edges[i][j] = 1
+            elif (inp[i][j] >= low_threshold) and (inp[i][j] < high_threshold): # weak edge < high but >= low
+                weak_edges[i][j] = 1
+
     # END
     
     if display:
@@ -274,7 +374,7 @@ def double_thresholding(inp, perc_weak=0.1, perc_strong=0.3, display=True):
         fig2.set_size_inches(10,5)
         image_plot = axes_array[0].imshow(strong_edges, cmap='gray')  
         axes_array[0].axis('off')
-        axes_array[0].set(title='Strong ')
+        axes_array[0].set(title='Strong')
 
         image_plot = axes_array[1].imshow(weak_edges, cmap='gray')  
         axes_array[1].axis('off')
@@ -302,14 +402,37 @@ def edge_linking(weak, strong, n=200, display=True):
     '''
     assert weak.shape == strong.shape, \
         "Weak and strong edge image have to have the same dimension"
-    out = None
-    
-    # YOUR CODE HERE
-    
+
+    h, w = weak.shape
+    prev_condition = 0
+    while (n > 0):
+        n-= 1
+        for i in range(1, h-1):
+            for j in range(1, w-1):
+
+                # For each weak pixel
+                if weak[i][j] == 1:
+
+                    # Get sum of neighbours values to find edge pixels in strong
+                    check_sum = np.sum([strong[i-1][j], strong[i+1][j], strong[i][j-1], strong[i][j+1], strong[i-1][j+1], strong[i-1][j-1], strong[i+1][j+1], strong[i+1][j-1]])
+
+                    # Add to strong set if any edge pixels are not 0
+                    if check_sum != 0:
+                        strong[i][j] = 1
+                        weak[i][j] = 0 # remove weak edge pixel when added to strong set
+
+        # Check if anything else is being added to strong
+        out_condition = np.sum(strong == 1)
+        if out_condition == prev_condition: # premature exit condition if nothing is added
+            n = 0 
+        else:
+            prev_condition = out_condition
+
+    out = strong
     # END
     if display:
         _ = plt.figure(figsize=(10,10))
-        plt.imshow(s)
+        plt.imshow(out)
         plt.title("Edge image")
     return out
 
@@ -328,15 +451,45 @@ def hough_vote_lines(img):
     :return distances: distance values array
     :return thetas: theta values array
     '''
-    # YOUR CODE HERE
+    h, w = img.shape
+    # Getting diagonal length of image
+    diagonal = round(np.hypot(h,w))
 
+    # Creating distances and thetas range distances = [-d, d) and thetas = [0, pi)
+    distances = np.array([x for x in range(-diagonal, diagonal)])
+    thetas = np.linspace(start=0, stop=math.pi, num=180)
+
+    # Creating Accumulator array
+    rho_dim = len(distances)
+    theta_dim = len(thetas) # default value of 0 to pi, with interval pi/180
+    A = np.zeros((rho_dim, theta_dim))
+
+    # Getting edge pixels array more than 0
+    edge_pixels = np.where(img > 0)
+
+    # Getting coordinates of edge pixels
+    coordinates = list(zip(edge_pixels[0], edge_pixels[1]))
+
+    # For x,y with edge pixel > 0 (has an edge)
+    for coord in coordinates:
+        x = coord[0]
+        y = coord[1]
+
+        for theta in range(len(thetas)): # from 0 to 180
+
+            # Get rho value using formula
+            rho = int(round(x * math.cos(thetas[theta]) + 
+            y * math.sin(thetas[theta])))
+
+            # Increment accumulator array at rho+diagonal to account for -d values
+            A[rho+diagonal][theta] += 1
     # END
             
     return A, distances, thetas
 
 # 4 GIVEN
 from skimage.feature import peak_local_max
-def find_peak_params(hspace, params_list,  window_size=1, threshold=0.5):
+def find_peak_params(hspace, params_list, window_size=1, threshold=0.5):
     '''
     Given a Hough space and a list of parameters range, compute the local peaks
     aka bins whose count is larger max_bin * threshold. The local peaks are computed
@@ -398,12 +551,51 @@ def hough_vote_circles(img, radius = None):
         R_min = 3
     else:
         [R_min,R_max] = radius
-    
-    # YOUR CODE HERE
 
+    thetas = np.arange(0, 360, 1)
+    r_delta = 1
+    x_delta = 1
+    y_delta = 1
+
+    # Getting limit arrays
+    X = np.arange(0, h, x_delta)
+    Y = np.arange(0, w, y_delta)
+    R = np.arange(R_min, R_max, r_delta)
+    A = np.zeros((len(R), len(X), len(Y)), dtype=np.float32)
+
+    # Getting edge pixels array more than 0
+    edge_pixels = np.where(img > 0)
+
+    # Getting coordinates of edge pixels
+    coordinates = list(zip(edge_pixels[0], edge_pixels[1]))
+
+    # # Naive version with all theta
+    # for coord in coordinates:
+    #     x = coord[0]
+    #     y = coord[1]
+
+    #     for r_idx in range(len(R)):
+    #         r = R[r_idx]
+    #         for t in thetas:
+    #             # from wikipedia https://en.wikipedia.org/wiki/Circle_Hough_Transform
+    #             t = np.deg2rad(t)
+    #             a = int(round(x - r*math.cos(t))//x_delta) 
+    #             b = int(round(y - r*math.sin(t))//y_delta)
+    #             if (0 <= a < h) and (0 <= b < w):
+    #                 A[r_idx][a][b] += 1
+
+    # For each x,y coordinate, cast a vote on its centre per radius
+    for r in R:
+        for coord in coordinates:            
+            x = coord[0]
+            y = coord[1]
+
+            # Using non naive version w/ circle perimeter
+            a, b = circle_perimeter(x, y, r, shape=(h,w))
+            if (0 <= a.all() < len(X)) and (0 <= b.all() < len(Y)): # only circles whose centres lie within the image frame
+                A[(r-R_min), a, b] += 1/(r) # 4.1 adding 1/radius instead of just 1
 
     # END
-   
     return A, R, X, Y
 
 ##################### TASK 4 ######################
@@ -428,14 +620,50 @@ def hough_vote_circles_grad(img, d_angle, radius = None):
     :return Y: y-coordinate values array
     '''
     # Check the radius range
-    h, w = img.shape[:2]    
+    h, w = img.shape[:2]  
     if radius == None:
         R_max = np.hypot(h,w)
         R_min = 3
     else:
         [R_min,R_max] = radius
+
+    # Quantization for 4.3
+    r_delta = 1
+    x_delta = 1
+    y_delta = 1
     
-    # YOUR CODE HERE
+    # Getting limit arrays
+    X = np.arange(0, h, x_delta)
+    Y = np.arange(0, w, y_delta)
+    R = np.arange(R_min, R_max, r_delta)
+    A = np.zeros((len(R), len(X), len(Y)), dtype=int)
+
+    # Getting edge pixels array more than 0
+    edge_pixels = np.where(img > 0)
+
+    # Getting coordinates of edge pixels
+    coordinates = list(zip(edge_pixels[0], edge_pixels[1]))
+
+    for coord in coordinates:
+        x = coord[0]
+        y = coord[1]
+        for r_idx in range(len(R)):
+
+            # Getting back original value of r
+            r = R[r_idx]
+
+            # Getting gradient and a1,b1 a2,b2 as per formula
+            gradient = d_angle[x][y]
+            a1 = int(round(x + r * math.cos(gradient))//x_delta)
+            b1 = int(round(y + r * math.sin(gradient))//y_delta)
+            a2 = int(round(x - r * math.cos(gradient))//x_delta)
+            b2 = int(round(y - r * math.sin(gradient))//y_delta)
+            if (0 <= a1 < len(X)) and (0 <= b1 < len(Y)): # if inside of index range (quantized space)
+                A[r_idx][a1][b1] += 1
+            if (0 <= a2 < len(X)) and (0 <= b2 < len(Y)):
+                A[r_idx][a2][b2] += 1
+
+
 
     # END
     return A, R, X, Y
@@ -486,13 +714,13 @@ def draw_lines(hspace, dists, thetas, hs_maxima, file_path):
     plt.tight_layout()
     plt.show()
 
-def draw_circles(local_maxima, file_path, title):
+def draw_circles(local_maxima, file_path, title): # changed based on forum
     img = cv2.imread(file_path)
-    fig = plt.figure(figsize=(7,7))
-    plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-    circle = []
+    fig, axes = plt.subplots(1, figsize=(7,7))
+    axes.set_aspect('equal')
+
+    axes.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     for _,r,x,y in zip(*local_maxima):
-        circle.append(plt.Circle((y,x),r,color=(1,0,0),fill=False))
-        fig.add_subplot(111).add_artist(circle[-1])
-    plt.title(title)    
+        axes.add_patch(matplotlib.patches.Circle((y,x),r,color=(1,0,0),fill=False))
+    plt.title(title)
     plt.show()
