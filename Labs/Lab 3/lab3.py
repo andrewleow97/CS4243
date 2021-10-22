@@ -7,7 +7,8 @@ from scipy.ndimage import gaussian_filter
 import math
 
 ### REMOVE THIS
-from cv2 import findHomography
+from cv2 import IMWRITE_EXR_TYPE, detail_AffineBasedEstimator, findHomography
+from skimage.filters.edges import sobel_h, sobel_v
 
 from utils import pad, unpad
 
@@ -58,6 +59,20 @@ def harris_corners(img, window_size=3, k=0.04):
 
     # YOUR CODE HERE
 
+    Ix = filters.sobel_h(img)
+    Iy = filters.sobel_v(img)
+
+    Ix2 = np.square(Ix)
+    Iy2 = np.square(Iy)
+    Ixy = np.multiply(Ix, Iy)
+    # To get A, B and C per window, convolve Sobel filter response of image with window 
+    A = convolve(Ix2, window, mode='constant', cval=0)
+    B = convolve(Ixy, window, mode='constant', cval=0)
+    C = convolve(Iy2, window, mode='constant', cval=0)
+
+    det = np.subtract(np.multiply(A, C), np.square(B))
+    trace = np.add(A, C)
+    response = det - k * np.square(trace)
     # END        
     return response
 
@@ -79,7 +94,10 @@ def naive_descriptor(patch):
     '''
     feature = []
     ### YOUR CODE HERE
-
+    mean = np.mean(patch)
+    stdev = np.std(patch)
+    F = (patch - mean)/(stdev + 0.0001)
+    feature = F.flatten()
     ### END YOUR CODE
 
     return feature
@@ -154,8 +172,40 @@ def simple_sift(patch):
     
     histogram = np.zeros((4,4,8))
     
+    H,W = patch.shape
+
     # YOUR CODE HERE
-  
+    Ix = sobel_h(patch)
+    Iy = sobel_v(patch)
+    gradient_magnitude = np.hypot(Ix, Iy)
+    gradient_orientation = np.arctan2(Iy, Ix) * 180/math.pi + 180
+    for i in range(0, H, 4):
+        for j in range(0, W, 4): # 4x4 cells
+            for row in range(4):
+                for col in range(4): # pixels in cell
+                    angle = gradient_orientation[i+row][j+col]
+                    if 0 <= angle < 45: # getting bin index
+                        bin = 0
+                    elif 45 <= angle < 90:
+                        bin = 1
+                    elif 90 <= angle < 135:
+                        bin = 2
+                    elif 135 <= angle < 180:
+                        bin = 3
+                    elif 180 <= angle < 225:
+                        bin = 4
+                    elif 225 <= angle < 270:
+                        bin = 5
+                    elif 270 <= angle < 315:
+                        bin = 6
+                    elif 315 <= angle < 360:
+                        bin = 7
+                    else: # angle = 360
+                        bin = 0          
+                    weight = gradient_magnitude[i+row][j+col] * weights[i+row][j+col]
+                    histogram[int(i/4), int(j/4), bin] += weight
+    feature = histogram.flatten()
+    feature = feature / np.linalg.norm(feature)
     # END
     return feature
 
@@ -172,9 +222,17 @@ def top_k_matches(desc1, desc2, k=2):
          ...<truncated>
     '''
     match_pairs = []
-    
     # YOUR CODE HERE
-  
+    euc_dist = cdist(desc1, desc2, metric='euclidean')
+
+    for i in range(euc_dist.shape[0]): # iterate through each desc1 euc_dist
+        dist = np.argsort(euc_dist[i])[:k] # k indices of smallest distances in euc_dist
+        nearest = []
+        for j in range(len(dist)):
+            nearest.append((dist[j], euc_dist[i][dist[j]])) # append (index, value @ index)
+        match_pairs.append((i, nearest))
+    
+    
     # END
     return match_pairs
 
@@ -202,7 +260,15 @@ def ratio_test_match(desc1, desc2, match_threshold):
     match_pairs = []
     top_2_matches = top_k_matches(desc1, desc2)
     # YOUR CODE HERE
-   
+#(0, [(150, 2.278091892653758), (18, 2.888618166218937)])
+    for i in top_2_matches: # i of the form tuple (desc1_index, [(desc2_index0, value0), (desc2_index1, value1)])
+        F1i = i[0]
+        F2 = i[1]
+        F2a = F2[0]
+        F2b = F2[1]
+        ratio = np.divide(F2a[1], F2b[1])
+        if ratio < match_threshold:
+            match_pairs.append([F1i, F2a[0]])
     # END
     # Modify this line as you wish
     match_pairs = np.array(match_pairs)
@@ -271,11 +337,59 @@ def compute_homography(src, dst):
         np.linalg.solve(), np.linalg.lstsq()
     '''
     h_matrix = np.eye(3, dtype=np.float64)
-  
+
+
     # YOUR CODE HERE
 
-    # END 
+    # Normalize X = src by setting to (0,0) and distance to origin = sqrt(2)
+    # Normalize X' = dst as well, same steps
+    # DLT to get H'
+    # Denormalization H = T'^-1 H' T
 
+    N = src.shape[0]
+
+    # Converting to homogeneous coordinates
+    src = pad(src) # N x 3
+    dst = pad(dst)
+
+    # T = [[1/sx, 0, -mx/sx], [0, 1/sy, -my/sy], [0, 0, 1]]
+
+    src_mx, src_my, _ = np.mean(src, axis=0) 
+    src_stdx, src_stdy, _ = np.std(src, axis=0)/np.sqrt(2)
+    T_src = [[1/src_stdx, 0, -1 * src_mx/src_stdx], 
+            [0, 1/src_stdy, -1 * src_my/src_stdy],
+            [0, 0, 1]]
+    src_norm = np.dot(T_src, src.T) # 3 x N matrix
+
+    dst_mx, dst_my, _ = np.mean(dst, axis=0) 
+    dst_stdx, dst_stdy, _ = np.std(dst, axis=0)/np.sqrt(2)
+    T_dst = [[1/dst_stdx, 0, -1 * dst_mx/dst_stdx], 
+            [0, 1/dst_stdy, -1 * dst_my/dst_stdy],
+            [0, 0, 1]]
+    dst_norm = np.dot(T_dst, dst.T) # 3 x N matrix
+
+    # calculating homography matrix A
+    A = []
+    for i in range(N):
+        x = src_norm[0][i]
+        y = src_norm[1][i]
+        xp = dst_norm[0][i]
+        yp = dst_norm[1][i]
+        Ai = np.array([[-x, -y, -1, 0, 0, 0, x*xp, y*xp, xp],
+                        [0, 0, 0, -x, -y, -1, x*yp, y*yp, yp]])
+        A.append(Ai)
+    A = np.concatenate(A, axis=0) # 2N x 9 matrix
+
+    # Getting SVD of A
+    u, s, vh = np.linalg.svd(A)
+
+    # Store singular vector of smallest singular value
+    k = vh[-1].reshape((3, 3)) # 3x3 matrix
+    kT = np.dot(k, T_src) # 3xN matrix
+
+    # Get H using de-normalization
+    h_matrix = np.dot(np.linalg.inv(T_dst), kT)
+    # END 
     return h_matrix
 
 # 2.2 IMPLEMENT
@@ -305,6 +419,8 @@ def ransac_homography(keypoints1, keypoints2, matches, sampling_ratio=0.5, n_ite
     N = matches.shape[0]
     n_samples = int(N * sampling_ratio)
 
+    # matched1_pad = pad(keypoints1[matches[:,0]]) # Nx3 matrix
+    # matched2_pad = pad(keypoints2[matches[:,1]]) # Nx3 matrix
     matched1_unpad = keypoints1[matches[:,0]]
     matched2_unpad = keypoints2[matches[:,1]]
 
@@ -313,7 +429,32 @@ def ransac_homography(keypoints1, keypoints2, matches, sampling_ratio=0.5, n_ite
 
     # RANSAC iteration start
     ### YOUR CODE HERE
- 
+    for i in range(n_iters):
+        random_sample = np.random.choice(N, n_samples)
+        src = matched1_unpad[random_sample]
+        dst = matched2_unpad[random_sample]
+
+        # Get H using DLT
+        H_matrix = compute_homography(src, dst)
+
+        # Matched keypoints are considered inliers if the projected point from one image lies within distance δ to the matched point on the other point.
+        projection = transform_homography(matched1_unpad, H_matrix)
+
+        distances = np.sqrt(np.sum(np.square(projection-matched2_unpad), axis=1))
+
+        if np.sum(distances < delta) > n_inliers:
+            max_inliers = distances < delta
+            n_inliers = np.sum(distances < delta)
+
+    # Get final H using maximum inliers
+    src = matched1_unpad[max_inliers]
+    dst = matched2_unpad[max_inliers]
+    H = compute_homography(src, dst)
+
+    projection = transform_homography(matched1_unpad, H_matrix)
+    distances = np.sqrt(np.sum(np.square(projection-matched2_unpad), axis=1))
+    max_inliers = distances < delta
+    
     ### END YOUR CODE
     return H, matches[max_inliers]
 
