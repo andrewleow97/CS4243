@@ -564,9 +564,24 @@ def shift_sift_descriptor(desc):
        [ 50.,   4.,   0.,   0.,   0.,   0.,   0.,   0.]]
     '''
     # YOUR CODE HERE
-   
-    # END
+    #transforming a 128-length array to another 128-length array.
+    # SIFT already shifts the indices to keep the dominant orientation first, the first index (0) will stay in the same position. Remaining bins are reversed, i.e. [0, 1, 2, ..7] remaps to [0, 7, 6, .., 2, 1].
+    unmirrored = desc.reshape((16,8))
+    mirrored = []
+    for i in range(unmirrored.shape[0]): # for each in 16
+        l = unmirrored[i][0] # first term leave unflipped
+        l = np.append(l,np.flip(unmirrored[i][1:8])) # flip the rest of the terms
+        mirrored.append(list(l))
+    mirrored = np.flipud(np.array(mirrored))
+    res = []
+    for i in range(0,16,4):
+        a = np.flipud(mirrored[i:i+4])
+        for j in range(4):
+            res.append(a[j])
+    res = np.array(res)
+    res = res.flatten()
     return res
+    # END
 
 # 3.1 IMPLEMENT
 def create_mirror_descriptors(img):
@@ -576,8 +591,12 @@ def create_mirror_descriptors(img):
     Make sure the virtual descriptors correspond to the original set of descriptors.
     '''
     # YOUR CODE HERE
- 
+    kps, descs, sizes, angles = compute_cv2_descriptor(img, method=cv2.SIFT_create())
+    mir_descs = []
+    for i in range(descs.shape[0]):
+        mir_descs.append(shift_sift_descriptor(descs[i]))
     # END
+    mir_descs = np.array(mir_descs)
     return kps, descs, sizes, angles, mir_descs
 
 # 3.2 IMPLEMENT
