@@ -59,8 +59,8 @@ def harris_corners(img, window_size=3, k=0.04):
 
     # YOUR CODE HERE
 
-    Ix = filters.sobel_h(img)
-    Iy = filters.sobel_v(img)
+    Ix = filters.sobel_h(img) 
+    Iy = filters.sobel_v(img) 
 
     Ix2 = np.square(Ix)
     Iy2 = np.square(Iy)
@@ -230,8 +230,7 @@ def top_k_matches(desc1, desc2, k=2):
         nearest = []
         for j in range(len(dist)):
             nearest.append((dist[j], euc_dist[i][dist[j]])) # append (index, value @ index)
-        match_pairs.append((i, nearest))
-    
+        match_pairs.append((i, np.array(nearest)))
     
     # END
     return match_pairs
@@ -260,7 +259,6 @@ def ratio_test_match(desc1, desc2, match_threshold):
     match_pairs = []
     top_2_matches = top_k_matches(desc1, desc2)
     # YOUR CODE HERE
-#(0, [(150, 2.278091892653758), (18, 2.888618166218937)])
     for i in top_2_matches: # i of the form tuple (desc1_index, [(desc2_index0, value0), (desc2_index1, value1)])
         F1i = i[0]
         F2 = i[1]
@@ -271,7 +269,7 @@ def ratio_test_match(desc1, desc2, match_threshold):
             match_pairs.append([F1i, F2a[0]])
     # END
     # Modify this line as you wish
-    match_pairs = np.array(match_pairs)
+    match_pairs = np.array(match_pairs, dtype=int)
     return match_pairs
 
 # GIVEN
@@ -347,11 +345,8 @@ def compute_homography(src, dst):
     # Denormalization H = T'^-1 H' T
 
     N = src.shape[0]
-
-    # Converting to homogeneous coordinates
-    src = pad(src) # N x 3
+    src = pad(src)
     dst = pad(dst)
-
     # T = [[1/sx, 0, -mx/sx], [0, 1/sy, -my/sy], [0, 0, 1]]
 
     src_mx, src_my, _ = np.mean(src, axis=0) 
@@ -359,22 +354,22 @@ def compute_homography(src, dst):
     T_src = [[1/src_stdx, 0, -1 * src_mx/src_stdx], 
             [0, 1/src_stdy, -1 * src_my/src_stdy],
             [0, 0, 1]]
-    src_norm = np.dot(T_src, src.T) # 3 x N matrix
+    src_norm = np.matmul(T_src, src.T).T # 3 x N matrix
 
     dst_mx, dst_my, _ = np.mean(dst, axis=0) 
     dst_stdx, dst_stdy, _ = np.std(dst, axis=0)/np.sqrt(2)
     T_dst = [[1/dst_stdx, 0, -1 * dst_mx/dst_stdx], 
             [0, 1/dst_stdy, -1 * dst_my/dst_stdy],
             [0, 0, 1]]
-    dst_norm = np.dot(T_dst, dst.T) # 3 x N matrix
+    dst_norm = np.matmul(T_dst, dst.T).T # 3 x N matrix
 
     # calculating homography matrix A
     A = []
     for i in range(N):
-        x = src_norm[0][i]
-        y = src_norm[1][i]
-        xp = dst_norm[0][i]
-        yp = dst_norm[1][i]
+        x = src_norm[i][0]
+        y = src_norm[i][1]
+        xp = dst_norm[i][0]
+        yp = dst_norm[i][1]
         Ai = np.array([[-x, -y, -1, 0, 0, 0, x*xp, y*xp, xp],
                         [0, 0, 0, -x, -y, -1, x*yp, y*yp, yp]])
         A.append(Ai)
@@ -385,9 +380,9 @@ def compute_homography(src, dst):
 
     # Store singular vector of smallest singular value
     k = vh[-1].reshape((3, 3)) # 3x3 matrix
-    kT = np.dot(k, T_src) # 3xN matrix
 
     # Get H using de-normalization
+    kT = np.dot(k, T_src) # 3xN matrix
     h_matrix = np.dot(np.linalg.inv(T_dst), kT)
     # END 
     return h_matrix
@@ -419,10 +414,9 @@ def ransac_homography(keypoints1, keypoints2, matches, sampling_ratio=0.5, n_ite
     N = matches.shape[0]
     n_samples = int(N * sampling_ratio)
 
-    # matched1_pad = pad(keypoints1[matches[:,0]]) # Nx3 matrix
-    # matched2_pad = pad(keypoints2[matches[:,1]]) # Nx3 matrix
     matched1_unpad = keypoints1[matches[:,0]]
     matched2_unpad = keypoints2[matches[:,1]]
+
 
     max_inliers = np.zeros(N)
     n_inliers = 0
@@ -431,32 +425,28 @@ def ransac_homography(keypoints1, keypoints2, matches, sampling_ratio=0.5, n_ite
     ### YOUR CODE HERE
     for i in range(n_iters):
         random_sample = np.random.choice(N, n_samples)
-        src = matched1_unpad[random_sample]
+        src = matched1_unpad[random_sample] # leave unpadded, is padded in compute homography
         dst = matched2_unpad[random_sample]
 
         # Get H using DLT
         H_matrix = compute_homography(src, dst)
 
         # Matched keypoints are considered inliers if the projected point from one image lies within distance δ to the matched point on the other point.
-        projection = transform_homography(matched1_unpad, H_matrix)
-
+        projection = transform_homography(matched1_unpad, H_matrix) # x point, y point
         distances = np.sqrt(np.sum(np.square(projection-matched2_unpad), axis=1))
-
         if np.sum(distances < delta) > n_inliers:
             max_inliers = distances < delta
             n_inliers = np.sum(distances < delta)
-
-    # Get final H using maximum inliers
+            
+    # Get final H using maximum inliers indices and src dst values
     src = matched1_unpad[max_inliers]
     dst = matched2_unpad[max_inliers]
     H = compute_homography(src, dst)
-
-    projection = transform_homography(matched1_unpad, H_matrix)
-    distances = np.sqrt(np.sum(np.square(projection-matched2_unpad), axis=1))
-    max_inliers = distances < delta
     
     ### END YOUR CODE
     return H, matches[max_inliers]
+
+
 
 ##################### PART 3 ###################
 # GIVEN FROM PREV LAB
@@ -566,6 +556,7 @@ def shift_sift_descriptor(desc):
     # YOUR CODE HERE
     #transforming a 128-length array to another 128-length array.
     # SIFT already shifts the indices to keep the dominant orientation first, the first index (0) will stay in the same position. Remaining bins are reversed, i.e. [0, 1, 2, ..7] remaps to [0, 7, 6, .., 2, 1].
+    
     unmirrored = desc.reshape((16,8))
     mirrored = []
     for i in range(unmirrored.shape[0]): # for each in 16
@@ -575,11 +566,11 @@ def shift_sift_descriptor(desc):
     mirrored = np.flipud(np.array(mirrored))
     res = []
     for i in range(0,16,4):
-        a = np.flipud(mirrored[i:i+4])
+        a = np.flipud(mirrored[i:i+4]) # flipping in grps of 4
         for j in range(4):
             res.append(a[j])
     res = np.array(res)
-    res = res.flatten()
+    res = res.reshape(128)
     return res
     # END
 
@@ -606,27 +597,63 @@ def match_mirror_descriptors(descs, mirror_descs, threshold = 0.7):
     from the same keypoint. Perform ratio test on the two matches left. If no descriptor is eliminated, perform the ratio test 
     on the best 2. 
     '''
-    three_matches = top_k_matches(descs, mirror_descs, k=3)
-
     match_result = []
-    # YOUR CODE HERE
-   
-    # END
+    top_three = top_k_matches(descs, descs, k=3)
+    top_three = np.array(top_three)
+    top_two = []
+
+    for kp, match in top_three:
+        if kp == int(match[0][0]): # mirror descriptor
+            new_list = match[1:]
+        
+        else:
+            new_list = match[:2] # best 2, should be first two since dist is sorted
+        top_two.append((kp, new_list))
+
+    top_two = np.array(top_two)
+    for i in top_two: # i of the form tuple (desc1_index, [(desc2_index0, value0), (desc2_index1, value1)])
+        F1i = i[0]
+        F2 = i[1]
+        F2a = F2[0]
+        F2b = F2[1]
+
+        ratio = np.divide(F2a[1], F2b[1])
+        if ratio < threshold:
+            match_result.append([F1i, F2a[0]])
+
+    match_result = np.array(match_result, dtype=int)
+    print(match_result)
+    # END     
+    
+
     return match_result
 
 # 3.3 IMPLEMENT
 def find_symmetry_lines(matches, kps):
     '''
     For each pair of matched keypoints, use the keypoint coordinates to compute a candidate symmetry line.
-    Assume the points associated with the original descriptor set to be I's, and the points associated with the mirror descriptor set to be
-    J's.
+    Assume the points associated with the original descriptor set to be I's, and the points associated with the mirror descriptor set to be J's.
     '''
     rhos = []
     thetas = []
     # YOUR CODE HERE
-
-    # END
-    
+    #  For a matched pair of points 𝑖 and 𝑘′, form a line that intersects the two points; this line is perpendicular to the symmetry line. Solve for the midpoint 𝑚=(𝑥𝑚,𝑦𝑚) between 𝑖 and 𝑘′ on the intersecting line and compute the angle 𝜃𝑚 that the line makes with the x-axis.
+    for match in matches:
+        I = match[0] # index of I
+        J = match[1] # index of J
+        ptI = kps[I]
+        ptJ = kps[J]
+        
+        mid = midpoint(ptI, ptJ)
+        angle = angle_with_x_axis(ptI, ptJ)
+        rho = mid[0] * np.cos(angle) + mid[1] * np.sin(angle)
+        
+        # rho = distance((0,0), mid)
+        # print(mid)
+        # print(rho, rho2)
+        rhos.append(rho)
+        thetas.append(angle)
+    #END
     return rhos, thetas
 
 # 3.4 IMPLEMENT
@@ -638,9 +665,32 @@ def hough_vote_mirror(matches, kps, im_shape, window=1, threshold=0.5, num_lines
     Feel free to vary the interval size.
     '''
     rhos, thetas = find_symmetry_lines(matches, kps)
-    
+    rhos = np.array(rhos)
+    thetas = np.array(thetas)
     # YOUR CODE HERE
-  
+    # Setting up A
+    diag_interval = 1
+    theta_interval = math.pi/180
+
+    diagonal = round(np.hypot(im_shape[0], im_shape[1]))
+    diag_dim = np.arange(-diagonal, diagonal, diag_interval)
+    theta_dim = np.arange(0, 2*math.pi, theta_interval)
+    A = np.zeros((diag_dim.shape[0], theta_dim.shape[0]))
+    for i in range(len(rhos)):
+        rho = round(rhos[i]) // diag_interval
+        theta = round((thetas[i]) // theta_interval)
+        A[rho+diagonal][theta] += 1
+    params = [diag_dim, theta_dim]
+    peak = find_peak_params(A, params, window, threshold)
+
+    rho_values = []
+    theta_values = []
+    for i in range(num_lines):
+        rho_values.append(peak[1][i])
+        theta_values.append(peak[2][i])
+    # The line(s) of symmetry in the image will be represented by local maxima in the Hough vote space.
+    rho_values = np.array(rho_values)
+    theta_values = np.array(theta_values)
     # END
     
     return rho_values, theta_values
@@ -657,8 +707,30 @@ def match_with_self(descs, kps, threshold=0.8):
     matches = []
     
     # YOUR CODE HERE
-   
-    # END
+    top_three = top_k_matches(descs, descs, k=3)
+    top_three = np.array(top_three)
+    top_two = []
+    for kp, match in top_three:
+        new_list = []
+        if kp == (match[0][0]):
+            new_list = match[1:] # match with itself
+        else:
+            new_list = match # no match with itself
+        top_two.append((kp, new_list))
+    top_two = np.array(top_two)
+
+    for i in top_two: # i of the form tuple (desc1_index, [(desc2_index0, value0), (desc2_index1, value1)])
+        F1i = i[0]
+        F2 = i[1]
+        F2a = F2[0]
+        F2b = F2[1]
+
+        ratio = np.divide(F2a[1], F2b[1])
+        if ratio < threshold:
+            matches.append([F1i, F2a[0]])
+
+    matches = np.array(matches, dtype=int)
+    # END     
     return matches
 
 # 4.2 IMPLEMENT
@@ -678,7 +750,39 @@ def find_rotation_centers(matches, kps, angles, sizes, im_shape):
     W = []
     
     # YOUR CODE HERE
+    angles = angles % 360 # make into range [0,360), convert to radians later
+    for match in matches:
+        I = match[0] # point to pivot I
+        J = match[1] # centre J
+        ptI = kps[I] # array of x-y coords
+        ptJ = kps[J] # array of x-y coords
+ 
+        angleI = (angles[I]  * math.pi/180) # single radian value
+        angleJ = (angles[J]  * math.pi/180) # single radian value
+        sizeI = sizes[I] # single size value
+        sizeJ = sizes[J] # single size value
 
+        if (abs(angleI-angleJ) <= (1 * math.pi/180)): # parallel angles within 1 degree radian, discard
+            continue
+
+        d = distance(ptI, ptJ)
+        y = angle_with_x_axis(ptI, ptJ)
+
+        B = (angleI - angleJ + math.pi)/2 
+        r = (d * np.sqrt(1 + np.square(np.tan(B)))) / 2 
+
+        Xc = round(ptI[1] + r * np.cos(B + y))
+        Yc = round(ptI[0] + r * np.sin(B + y))
+
+        if (Xc < 0 or Xc > im_shape[1] or Yc < 0 or Yc > im_shape[0]): # check if in range
+            continue
+
+        q = -1 * abs(sizeI - sizeJ) / (sizeI + sizeJ)
+        weight = np.square(np.exp(q)) # w = (e^q)^2
+        Y.append(Yc)
+        X.append(Xc)
+        W.append(weight)
+        
     # END
     
     return Y,X,W
@@ -693,9 +797,27 @@ def hough_vote_rotation(matches, kps, angles, sizes, im_shape, window=1, thresho
     '''
     
     Y,X,W = find_rotation_centers(matches, kps, angles, sizes, im_shape)
-    
+    y_values = []
+    x_values = []
     # YOUR CODE HERE
+    A = np.zeros((math.ceil(im_shape[0]/window)+1, math.ceil(im_shape[1]/window)+1), dtype=float) # y is height, x is width
 
-    # END
+    for i in range(len(X)):
+        x = int(X[i]//window)
+        y = int(Y[i]//window)
+        A[y][x] += W[i] # add weight to position in accumulator array
+
     
+    for i in range(num_centers):
+        # The global maxima should correspond to the center of rotation.
+        # Basically do non-max suppression for num_centers times
+        max_val = np.amax(A)
+        centers = np.where(A == max_val) # indices of max val, append to y,x
+        y = centers[0][0]
+        x = centers[1][0]
+        y_values.append(y*window)
+        x_values.append(x*window)
+        A[y][x] = 0
+
+
     return y_values, x_values
