@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.core.fromnumeric import diagonal
 from skimage import filters
 from skimage.feature import corner_peaks
 from scipy.spatial.distance import cdist
@@ -97,7 +98,7 @@ def naive_descriptor(patch):
     mean = np.mean(patch)
     stdev = np.std(patch)
     F = (patch - mean)/(stdev + 0.0001)
-    feature = F.flatten()
+    feature = F.flatten() # feature: 1D array of shape (h * w)
     ### END YOUR CODE
 
     return feature
@@ -432,6 +433,7 @@ def ransac_homography(keypoints1, keypoints2, matches, sampling_ratio=0.5, n_ite
         H_matrix = compute_homography(src, dst)
 
         # Matched keypoints are considered inliers if the projected point from one image lies within distance δ to the matched point on the other point.
+
         projection = transform_homography(matched1_unpad, H_matrix) # x point, y point
         distances = np.sqrt(np.sum(np.square(projection-matched2_unpad), axis=1))
         if np.sum(distances < delta) > n_inliers:
@@ -570,7 +572,8 @@ def shift_sift_descriptor(desc):
         for j in range(4):
             res.append(a[j])
     res = np.array(res)
-    res = res.reshape(128)
+    res = res.reshape(128) # make back into 128-length array
+
     return res
     # END
 
@@ -587,7 +590,7 @@ def create_mirror_descriptors(img):
     for i in range(descs.shape[0]):
         mir_descs.append(shift_sift_descriptor(descs[i]))
     # END
-    mir_descs = np.array(mir_descs)
+    mir_descs = np.array(mir_descs) # should be same shape as descs
     return kps, descs, sizes, angles, mir_descs
 
 # 3.2 IMPLEMENT
@@ -598,14 +601,12 @@ def match_mirror_descriptors(descs, mirror_descs, threshold = 0.7):
     on the best 2. 
     '''
     match_result = []
-    top_three = top_k_matches(descs, descs, k=3)
+    top_three = top_k_matches(descs, mirror_descs, k=3)
     top_three = np.array(top_three)
     top_two = []
-
     for kp, match in top_three:
-        if kp == int(match[0][0]): # mirror descriptor
+        if kp == int(match[0][0]): # mirror descriptor, eliminate
             new_list = match[1:]
-        
         else:
             new_list = match[:2] # best 2, should be first two since dist is sorted
         top_two.append((kp, new_list))
@@ -622,9 +623,7 @@ def match_mirror_descriptors(descs, mirror_descs, threshold = 0.7):
             match_result.append([F1i, F2a[0]])
 
     match_result = np.array(match_result, dtype=int)
-    print(match_result)
     # END     
-    
 
     return match_result
 
@@ -645,55 +644,58 @@ def find_symmetry_lines(matches, kps):
         ptJ = kps[J]
         
         mid = midpoint(ptI, ptJ)
-        angle = angle_with_x_axis(ptI, ptJ)
-        rho = mid[0] * np.cos(angle) + mid[1] * np.sin(angle)
-        
-        # rho = distance((0,0), mid)
-        # print(mid)
-        # print(rho, rho2)
+        angle = angle_with_x_axis(ptI, mid)
+
+        rho = mid[1] * np.cos(angle) + mid[0] * np.sin(angle)
         rhos.append(rho)
         thetas.append(angle)
     #END
     return rhos, thetas
 
 # 3.4 IMPLEMENT
-def hough_vote_mirror(matches, kps, im_shape, window=1, threshold=0.5, num_lines=1):
+def hough_vote_mirror(matches, kps, im_shape, window=1, threshold=0.5, num_lines=1, interval=1):
     '''
     Hough Voting:
                  0<=thetas<= 2pi      , interval size = 1 degree
         -diagonal <= rhos <= diagonal , interval size = 1 pixel
     Feel free to vary the interval size.
     '''
+    
     rhos, thetas = find_symmetry_lines(matches, kps)
     rhos = np.array(rhos)
-    thetas = np.array(thetas)
-    # YOUR CODE HERE
-    # Setting up A
-    diag_interval = 1
-    theta_interval = math.pi/180
+    thetas = np.array(thetas) # in radian
+    # # YOUR CODE HERE
+
+    # # Setting up A
+    diag_interval = interval
+    theta_interval = interval*math.pi/180
 
     diagonal = round(np.hypot(im_shape[0], im_shape[1]))
     diag_dim = np.arange(-diagonal, diagonal, diag_interval)
     theta_dim = np.arange(0, 2*math.pi, theta_interval)
     A = np.zeros((diag_dim.shape[0], theta_dim.shape[0]))
+
     for i in range(len(rhos)):
-        rho = round(rhos[i]) // diag_interval
-        theta = round((thetas[i]) // theta_interval)
-        A[rho+diagonal][theta] += 1
+        rho = np.argmax(diag_dim > rhos[i])
+        theta = np.argmax(theta_dim > thetas[i])
+        A[rho][theta] += 1
+
+    # The line(s) of symmetry in the image will be represented by local maxima in the Hough vote space.
     params = [diag_dim, theta_dim]
     peak = find_peak_params(A, params, window, threshold)
-
     rho_values = []
     theta_values = []
     for i in range(num_lines):
         rho_values.append(peak[1][i])
         theta_values.append(peak[2][i])
-    # The line(s) of symmetry in the image will be represented by local maxima in the Hough vote space.
+
+    
     rho_values = np.array(rho_values)
     theta_values = np.array(theta_values)
     # END
     
     return rho_values, theta_values
+
 
 ##################### PART 4 ###################
 
@@ -788,7 +790,7 @@ def find_rotation_centers(matches, kps, angles, sizes, im_shape):
     return Y,X,W
 
 # 4.3 IMPLEMENT
-def hough_vote_rotation(matches, kps, angles, sizes, im_shape, window=1, threshold=0.5, num_centers=1):
+def hough_vote_rotation(matches, kps, angles, sizes, im_shape, window=1, threshold=0.5, num_centers=1, interval=1):
     '''
     Hough Voting:
         X: bound by width of image
@@ -800,24 +802,33 @@ def hough_vote_rotation(matches, kps, angles, sizes, im_shape, window=1, thresho
     y_values = []
     x_values = []
     # YOUR CODE HERE
-    A = np.zeros((math.ceil(im_shape[0]/window)+1, math.ceil(im_shape[1]/window)+1), dtype=float) # y is height, x is width
-
+    A = np.zeros((math.ceil(im_shape[0]/interval), math.ceil(im_shape[1]/interval)), dtype=float) # y is first term x is second term
+    y_range = np.arange(0, im_shape[0], interval)
+    x_range = np.arange(0, im_shape[1], interval)
     for i in range(len(X)):
-        x = int(X[i]//window)
-        y = int(Y[i]//window)
+        y = np.argmax(y_range > Y[i])
+        x = np.argmax(x_range > X[i])
         A[y][x] += W[i] # add weight to position in accumulator array
 
-    
-    for i in range(num_centers):
-        # The global maxima should correspond to the center of rotation.
-        # Basically do non-max suppression for num_centers times
-        max_val = np.amax(A)
-        centers = np.where(A == max_val) # indices of max val, append to y,x
-        y = centers[0][0]
-        x = centers[1][0]
-        y_values.append(y*window)
-        x_values.append(x*window)
-        A[y][x] = 0
+    params = [y_range, x_range]
+    peak = find_peak_params(A, params, window, threshold)
 
+    # Solution with peak params
+    for i in range(num_centers):
+        y_values.append(peak[1][i])
+        x_values.append(peak[2][i])
+
+    # Solution with self-implemented global maxima
+
+    # for i in range(num_centers):
+    #     # The global maxima should correspond to the center of rotation.
+    #     # Basically do non-max suppression for num_centers times
+    #     max_val = np.amax(A)
+    #     centers = np.where(A == max_val) # indices of max val, append to y,x
+    #     y = centers[0][0]
+    #     x = centers[1][0]
+    #     y_values.append(y*interval)
+    #     x_values.append(x*interval)
+    #     A[y][x] = 0
 
     return y_values, x_values
